@@ -18,92 +18,61 @@ TEXT = [
 ]
 
 def create_commit(date):
+    # Menggunakan pesan "WINSNEW" sesuai permintaan
     git_date = date.strftime("%Y-%m-%d %H:%M")
     command = f'GIT_AUTHOR_DATE="{git_date}" GIT_COMMITTER_DATE="{git_date}" git commit --allow-empty -m "WINSNEW"'
     os.system(command)
 
 def clean_previous_drawing():
     """
-    Menghapus commit 'WINSNEW' menggunakan file skrip eksternal untuk menghindari error parsing shell.
+    Modifikasi: Menghapus SEMUA commit yang terjadi di TARGET_YEAR.
+    Ini memastikan grafik benar-benar bersih (kosong) sebelum menggambar.
+    Metode ini lebih andal daripada mencari pesan commit tertentu.
     """
-    print(f"!!! ACTION: Cleaning previous drawing ('WINSNEW') !!!")
+    print(f"!!! ACTION: Cleaning ALL commits in year {TARGET_YEAR} !!!")
     
-    # 1. Ambil daftar hash commit yang ingin dihapus
-    try:
-        # Filter hanya commit di tahun target dan pesan WINSNEW untuk efisiensi
-        cmd = f'git log --grep="WINSNEW" --after="{TARGET_YEAR}-01-01" --before="{TARGET_YEAR+1}-01-01" --format=%H'
-        output = subprocess.check_output(cmd, shell=True, text=True).strip()
-        
-        if not output:
-            print("No drawing commits found to clean.")
-            return
-        
-        hashes = output.split('\n')
-        print(f"Found {len(hashes)} drawing commits to remove.")
-    except subprocess.CalledProcessError:
-        print("No drawing commits found.")
-        return
-
-    # 2. Buat file skrip sementara untuk filter-branch
-    # Ini jauh lebih stabil daripada menulis logic if/else di dalam string os.system
-    script_content = "#!/bin/sh\n\n"
+    # Membuat skrip shell sementara untuk filter-branch
+    # Logika: Jika tanggal commit mengandung TARGET_YEAR, hapus (skip). Jika tidak, pertahankan.
+    script_content = f"""#!/bin/sh
     
-    # Logika: Jika hash cocok, jangan print apapun (drop commit). Jika tidak, cetak hash baru.
-    # Karena filter-branch memproses satu per satu, kita cek apakah GIT_COMMIT ada di daftar kita.
-    # Namun membandingkan string di sh lebih mudah.
+    # Ambil tanggal author
+    COMMIT_DATE=$(git log -1 --format=%aI $GIT_COMMIT)
     
-    # Kita buat kondisi pengecekan
-    check_list = " ".join(hashes)
-    script_content += f'''
-    TARGET_COMMITS="{check_list}"
-    
-    # Cek apakah commit saat ini ada di daftar target
-    case " $TARGET_COMMITS " in
-      *" $GIT_COMMIT "*)
-        # Commit ini adalah WINSNEW, skip (jangan print hash baru)
-        # Untuk skip di commit-filter, kita cukup tidak mengeluarkan output
-        ;;
-      *)
-        # Commit lain, pertahankan
+    # Cek apakah tahun ada di tanggal
+    if echo "$COMMIT_DATE" | grep -q "{TARGET_YEAR}"; then
+        # Tidak print apapun = menghapus commit
+        exit 0
+    else
+        # Print hash baru = mempertahankan commit
         git commit-tree "$@"
-        ;;
-    esac
-    '''
+    fi
+    """
     
     script_filename = "_clean_filter_script.sh"
     with open(script_filename, "w") as f:
         f.write(script_content)
     
-    # 3. Jalankan filter-branch menggunakan file tsb
-    # Kita pakai 'sh' agar kompatibel Windows (via Git Bash) dan Linux
+    # Jalankan filter-branch
+    # Menambahkan -- --all untuk memastikan semua branch/riwayat bersih jika diperlukan,
+    # namun HEAD biasanya cukup untuk branch saat ini.
     filter_cmd = f'git filter-branch --force --commit-filter "sh {script_filename}" HEAD'
     
-    print("Running cleanup script...")
+    print("Running cleanup... (this may take a moment)")
     exit_code = os.system(filter_cmd)
     
-    # 4. Bersih-bersih
+    # Hapus file skrip sementara
     if os.path.exists(script_filename):
         os.remove(script_filename)
         
     if exit_code != 0:
-        print("WARNING: Filter branch failed. Attempting full year reset as fallback...")
-        # Fallback: Hapus seluruh tahun jika filter gagal (misal permission issue)
-        clean_year_fallback(TARGET_YEAR)
+        print("ERROR: Cleanup failed. Please check your git status or permissions.")
+        sys.exit(1)
     else:
-        # Standar cleanup setelah filter-branch
+        # Standar cleanup git setelah filter-branch
         os.system("rm -rf .git/refs/original/")
         os.system("git reflog expire --expire=now --all")
         os.system("git gc --prune=now --aggressive")
-        print("Cleanup complete.")
-
-def clean_year_fallback(year):
-    """Metode lama: menghapus seluruh commit di tahun tersebut."""
-    print(f"Running fallback cleaner for year {year}...")
-    filter_cmd = f'git filter-branch --force --commit-filter \'if [ "$(echo "$GIT_AUTHOR_DATE" | grep -c "{year}")" -gt 0 ]; then skip_commit "$@"; else git commit-tree "$@"; fi\' HEAD'
-    os.system(filter_cmd)
-    os.system("rm -rf .git/refs/original/")
-    os.system("git reflog expire --expire=now --all")
-    os.system("git gc --prune=now --aggressive")
+        print(f"Year {TARGET_YEAR} cleaned successfully.")
 
 # --- DATE LOGIC ---
 target_date = datetime.date(TARGET_YEAR, 1, 1)
