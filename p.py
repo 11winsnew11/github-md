@@ -3,15 +3,13 @@ import sys
 import os
 
 def main():
-    print("=== Skrip Perbaikan Tanggal Git (Versi Cerdas) ===")
+    print("=== Skrip Perbaikan Tanggal Git & Hapus Commit Kosong ===")
     
     if not os.path.exists(".git"):
         print("Error: Jalankan skrip ini di dalam direktori repositori git.")
         return
 
     # --- CEK KONDISI FOLDER (DIRTY STATE) ---
-    # Perintah: git status --porcelain
-    # Jika ada output, berarti ada file yang terubah.
     status_cmd = ["git", "status", "--porcelain"]
     status_result = subprocess.run(status_cmd, capture_output=True, text=True)
     
@@ -48,12 +46,16 @@ def main():
         print(f"Tidak ada commit di tahun {target_year}.")
         return
 
-    print(f"Ditemukan {len(commits_2026)} commit untuk diubah.")
-    print("Memulai proses rewrite history... (Sabar, 626 commit butuh waktu beberapa menit)")
+    print(f"Ditemukan {len(commits_2026)} commit di tahun {target_year}.")
+    print("\nPROSES YANG AKAN TERJADI:")
+    print("1. Commit yang BERISI file -> Tanggal diubah ke tahun baru.")
+    print("2. Commit yang KOSONG -> akan DIHAPUS.")
+    print("Memulai proses rewrite history...")
 
     env = os.environ.copy()
     env['FILTER_BRANCH_SQUELCH_WARNING'] = '1'
 
+    # Script filter untuk mengubah tanggal
     date_filter_script = f'''
     OLD_YEAR="{target_year}"
     NEW_YEAR="{new_year}"
@@ -65,14 +67,22 @@ def main():
     fi
     '''
 
-    filter_cmd = ["git", "filter-branch", "-f", "--env-filter", date_filter_script, "--", "--all"]
+    # Perintah utama: Menambahkan --prune-empty untuk menghapus commit yang kosong
+    filter_cmd = [
+        "git", "filter-branch", "-f", 
+        "--env-filter", date_filter_script,
+        "--prune-empty",  # <--- INI MODIFIKASI UTAMANYA
+        "--", "--all"
+    ]
     
     process = subprocess.Popen(filter_cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stdout, stderr = process.communicate()
 
     if process.returncode == 0:
         print("\n[ SUKSES ] Proses rewrite selesai.")
-        print("Sekarang jalankan perintah ini untuk update ke GitHub:")
+        print("Commit kosong di tahun 2026 telah dihapus.")
+        print("Commit berisi di tahun 2026 telah dipindah tanggalnya.")
+        print("\nSekarang jalankan perintah ini untuk update ke GitHub:")
         print("  git push --force --all")
     else:
         print("\n[ GAGAL ] Terjadi kesalahan:")
